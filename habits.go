@@ -19,6 +19,33 @@ import (
 	"golang.org/x/term"
 )
 
+// Why are there these global variables instead of a simple config type?
+// Wherever possible, you should avoid global variables.
+
+// ANSI color codes (using 16-color background for better compatibility)
+const ( // Background colors
+	squareChar     = "  " // Two spaces for the square content
+	squareSeparator = "  "  // Two spaces between squares
+	vertSeparator   = " " // Simple space separator for better alignment
+)
+
+// ViewMode represents the display mode for the grid
+type ViewMode int
+
+const (
+	ViewSingleHabit ViewMode = iota // View for a single habit
+	ViewAggregate                    // Aggregate view for all habits
+)
+
+// Represents a day in the grid view
+type GridDay struct {
+	Date           time.Time
+	CompletedCount int  // Number of habits completed (for aggregate view)
+	Done           bool // Whether the specific habit was done (for single view)
+	InFuture       bool // Whether this date is in the future
+}
+
+
 // Terminal color support variables
 var (
 	supportsColor bool
@@ -35,62 +62,24 @@ var (
 	clearScreen   string
 )
 
-// Initialize terminal capabilities based on OS
-func init() {
-	// Check if terminal supports colors
-	supportsColor = true
-	
-	// Windows Command Prompt doesn't support ANSI colors by default
-	// But Windows Terminal and PowerShell 5.1+ do support them
-	if runtime.GOOS == "windows" {
-		// Try to detect if we're in a capable terminal
-		// Simple check: CI environments and Windows Terminal/ConEmu often set these
-		_, hasColorTerm := os.LookupEnv("COLORTERM")
-		_, hasConEmuANSI := os.LookupEnv("ConEmuANSI")
-		_, hasWT_SESSION := os.LookupEnv("WT_SESSION")
-		_, hasTERM := os.LookupEnv("TERM")
-		
-		// If none of these are set, disable colors for Windows
-		if !hasColorTerm && !hasConEmuANSI && !hasWT_SESSION && !hasTERM {
-			supportsColor = false
-		}
-	}
-	
-	// Initialize colors based on support
-	if supportsColor {
-		colorDone = "\033[48;5;22m"  // Dark green for completed habits
-		colorCode1 = "\033[48;5;22m"  // Very dark green for 1 habit
-		colorCode2 = "\033[48;5;35m"  // Medium vibrant green for 2 habits
-		colorCode3 = "\033[48;5;118m" // Bright neon green for 3+ habits
-		colorEmpty = "\033[48;5;240m" // Grey for empty boxes
-		colorReset = "\033[0m"
-		boldText = "\033[1m"
-		italicText = "\033[3m"
-		accentText = "\033[36m"
-		resetText = "\033[0m"
-		clearScreen = "\033[H\033[2J"
-	} else {
-		// Fallback for terminals without color support
-		colorDone = ""
-		colorCode1 = ""
-		colorCode2 = ""
-		colorCode3 = ""
-		colorEmpty = ""
-		colorReset = ""
-		boldText = ""
-		italicText = ""
-		accentText = ""
-		resetText = ""
-		clearScreen = ""
-	}
+// Again, avoid globals. This should be a config.
+// If you're going to have globals, have them all at the top, not scattered throughout.
+// Having them scattered makes it hard to go from "Ok, I know what this thing is"
+// to "Ok let's find out what this function does" and back and forth forever until
+// you eventually die, releasing you from the mortal coil that is life. And that could
+// be nice, as life is nothing but unrelenting pain and sadness with microscopic windows
+// of hope that you think might be good but in the end cause even more pain than
+// you had before you had a semblance of hope.
+var dataFilePath string
 
-	// Initialize home directory and data file path
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Println("Error determining home directory:", err)
-		os.Exit(1)
-	}
-	dataFilePath = filepath.Join(homeDir, ".habits_tracker.json")
+// Define HabitStats type at package level for reuse
+type HabitStats struct {
+	name          string
+	currentStreak int
+	longestStreak int
+	weeklyRate    float64
+	monthlyRate   float64
+	yearlyRate    float64
 }
 
 type Habit struct {
@@ -104,7 +93,55 @@ type DataFile struct {
 	Habits []Habit `json:"habits"`
 }
 
-var dataFilePath string
+// Initialize terminal capabilities based on OS
+func init() {
+	// Windows Command Prompt doesn't support ANSI colors by default
+	// But Windows Terminal and PowerShell 5.1+ do support them
+	if runtime.GOOS == "windows" {
+		// Try to detect if we're in a capable terminal
+		// Simple check: CI environments and Windows Terminal/ConEmu often set these
+		_, hasColorTerm := os.LookupEnv("COLORTERM")
+		_, hasConEmuANSI := os.LookupEnv("ConEmuANSI")
+		_, hasWT_SESSION := os.LookupEnv("WT_SESSION")
+		_, hasTERM := os.LookupEnv("TERM")
+		
+		// If none of these are set, disable colors for Windows
+		if !hasColorTerm && !hasConEmuANSI && !hasWT_SESSION && !hasTERM {
+        // As we only REALLY use "supportsColor" here, just inline set all of these.
+            colorDone = ""
+            colorCode1 = ""
+            colorCode2 = ""
+            colorCode3 = ""
+            colorEmpty = ""
+            colorReset = ""
+            boldText = ""
+            italicText = ""
+            accentText = ""
+            resetText = ""
+            clearScreen = ""
+        } else {
+            colorDone = "\033[48;5;22m"  // Dark green for completed habits
+            colorCode1 = "\033[48;5;22m"  // Very dark green for 1 habit
+            colorCode2 = "\033[48;5;35m"  // Medium vibrant green for 2 habits
+            colorCode3 = "\033[48;5;118m" // Bright neon green for 3+ habits
+            colorEmpty = "\033[48;5;240m" // Grey for empty boxes
+            colorReset = "\033[0m"
+            boldText = "\033[1m"
+            italicText = "\033[3m"
+            accentText = "\033[36m"
+            resetText = "\033[0m"
+            clearScreen = "\033[H\033[2J"
+        }
+	}
+	
+	// Initialize home directory and data file path
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Println("Error determining home directory:", err)
+		os.Exit(1)
+	}
+	dataFilePath = filepath.Join(homeDir, ".habits_tracker.json")
+}
 
 func loadData() (*DataFile, error) {
 	df := &DataFile{}
@@ -152,6 +189,7 @@ func saveData(df *DataFile) error {
 	return enc.Encode(df)
 }
 
+// FIXME: This is literally never used.
 func suggestShortName(habitName string) string {
 	// e.g., take first letter of each word, lowercase, strip non-alphanumeric
 	words := strings.Fields(habitName)
@@ -172,6 +210,7 @@ func suggestShortName(habitName string) string {
 	return shortName
 }
 
+// FIXME: Never used.
 func ensureUniqueShortName(df *DataFile, initialShortName string) string {
 	shortName := initialShortName
 	existingShorts := make(map[string]struct{})
@@ -292,16 +331,17 @@ func commandList(df *DataFile) {
 				return
 			}
 			
-			// Clear screen between pages for better readability
-			if supportsColor {
-				fmt.Print(clearScreen) // Clear screen
-			}
+            // No reason to not clear the screen just because it doesn't have color
+            fmt.Print(clearScreen)
 			// Add extra spacing at the beginning
 			fmt.Println()
 			fmt.Printf("%s📋 Your Habits%s\n", boldText, resetText)
 		}
 	}
 }
+
+// TODO: You don't need to write "helper function" everywhere.
+// You can just write "Display specific page of habits."
 
 // Helper function to display a specific page of habits
 func displayHabitsPage(habits []Habit, startIdx, endIdx int) {
@@ -466,29 +506,6 @@ func getTerminalWidth() int {
 		return 80 // Default width if detection fails
 	}
 	return width
-}
-
-// ANSI color codes (using 16-color background for better compatibility)
-const ( // Background colors
-	squareChar     = "  " // Two spaces for the square content
-	squareSeparator = "  "  // Two spaces between squares
-	vertSeparator   = " " // Simple space separator for better alignment
-)
-
-// ViewMode represents the display mode for the grid
-type ViewMode int
-
-const (
-	ViewSingleHabit ViewMode = iota // View for a single habit
-	ViewAggregate                    // Aggregate view for all habits
-)
-
-// Represents a day in the grid view
-type GridDay struct {
-	Date           time.Time
-	CompletedCount int  // Number of habits completed (for aggregate view)
-	Done           bool // Whether the specific habit was done (for single view)
-	InFuture       bool // Whether this date is in the future
 }
 
 // Calculates the start date (a Sunday) for the grid, ensuring today is included
@@ -667,10 +684,7 @@ func commandView(args []string, df *DataFile) {
 		return
 	}
 	
-	// Clear screen for better readability
-	if supportsColor {
-		fmt.Print(clearScreen)
-	}
+    fmt.Print(clearScreen)
 	fmt.Printf("📊 %sTracker: %s%s (%s%s%s)\n\n", boldText, habit.Name, resetText, italicText, habit.ShortName, resetText)
 	
 	// If day view, show the daily summary instead of grid
@@ -799,10 +813,7 @@ func commandViewAggregate(df *DataFile, viewRange string) {
 		return
 	}
 	
-	// Clear screen for better readability
-	if supportsColor {
-		fmt.Print(clearScreen)
-	}
+    fmt.Print(clearScreen)
 	fmt.Printf("📊 %sTracker%s\n\n", boldText, resetText)
 
 	// Calculate daily completion counts for all habits
@@ -897,6 +908,7 @@ func checkRemindersWithIndices(df *DataFile) [][2]string {
 		}
 		if !isDoneToday {
 			// Store both the index (1-based) and name
+            // TODO: Why is the index 1-based?
 			needsReminder = append(needsReminder, [2]string{strconv.Itoa(i+1), h.Name})
 		}
 	}
@@ -1023,16 +1035,6 @@ func calculateCompletionRate(dates []string, period int) float64 {
 	}
 	
 	return float64(completedDays) / float64(totalDays) * 100
-}
-
-// Define HabitStats type at package level for reuse
-type HabitStats struct {
-	name          string
-	currentStreak int
-	longestStreak int
-	weeklyRate    float64
-	monthlyRate   float64
-	yearlyRate    float64
 }
 
 func commandStats(args []string, df *DataFile) {
@@ -1469,6 +1471,7 @@ func commandUndone(df *DataFile) {
 }
 
 // New function: commandRemove implements what undone used to do
+// FIXME: What did "undone" used to do? Why the change?
 func commandRemove(args []string, df *DataFile) {
 	if len(args) == 0 {
 		fmt.Println("Error: Specify which habit to remove completion for.")
@@ -1567,8 +1570,9 @@ func commandRemove(args []string, df *DataFile) {
 
 func printHelp() {
 	cmdWidth := 30 // Adjust command display width
-
-	fmt.Printf("%s🌟 Habits Tracker - Help%s\n", boldText, resetText)
+    
+    // Emojis are illegal.
+	fmt.Printf("%s Habits Tracker - Help%s\n", boldText, resetText)
 	
 	fmt.Printf("Usage: %shabits%s <command> [arguments...]\n", boldText, resetText)
 	fmt.Printf("\n%sCommands:%s\n", boldText, resetText)

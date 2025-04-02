@@ -30,6 +30,7 @@ mv ./habits "$INSTALL_DIR/habits"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to move binary to $INSTALL_DIR."
     echo "You might need to run this script with sudo, or manually move the './habits' binary."
+    # Specify the install directory ($HOME/.local/bin) in the error message.
     exit 1
 fi
 
@@ -88,6 +89,7 @@ case ":$PATH:" in
             
             CONFIG_COMMAND="export PATH=\"$INSTALL_DIR:\$PATH\""
             
+            # To keep in line with the fish config notice, you should also specify `source ~/.bashrc` or `exec zsh`. 
             echo ""
             echo "-----------------------------------------------------------------"
             echo " IMPORTANT: Add $INSTALL_DIR to your PATH"
